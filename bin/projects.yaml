@@ -1,0 +1,15 @@
+root: /home/blue/folders/projects
+archive: /home/blue/folders/projects
+lang: bash
+projects:
+  - projmanager
+  - cliplistener
+  - datefilter
+  - organize
+  - plb
+  - trim
+  - clock
+  - quotereader
+  - shortcut
+  - timer
+  - dvhelper

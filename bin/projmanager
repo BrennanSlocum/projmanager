@@ -1,0 +1,361 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+VERSION=1.2
+VERDATE="July 30, 2026"
+
+USERNAME=$(whoami)
+
+readConfig() {
+    PROJECT_CONFIG="/home/$USERNAME/folders/projects/projmanager/bin/projects.yaml"
+
+    PROJ_ROOT=$(yq -r '.root' "$PROJECT_CONFIG")
+    ARCHIVE=$(yq -r '.archive' "$PROJECT_CONFIG")
+    PROJECTS=$(yq -r '.projects' "$PROJECT_CONFIG")
+    LANGUAGE=$(yq -r ".lang" "$PROJECT_CONFIG")
+
+    # PROJ_COUNT=$(yq ".${PROJECTS} | length" "$PROJECT_CONFIG")
+}
+readConfig
+
+# echo $PROJECTS
+
+usage() {
+    exitCode=${1:-0}
+    cat <<EOF
+projmanager $VERSION ${VERDATE}
+
+usage:
+    projmanager [arguments]
+
+arguments:
+    -h       help
+    -v       version
+    -z       zip
+    -o       open project (project name)
+    -u       update project (project name)
+    -g       generate new proj
+    -r       remove proj
+    -c       open config
+    -x       eXecute proj
+    -l       lint proj
+
+EOF
+    exit "$exitCode"
+}
+
+# colors
+FORMAT="\033["
+ESC="m"
+
+NC="${FORMAT}0$ESC"
+BOLD="${FORMAT}1$ESC"
+DIM="${FORMAT}2$ESC"
+NORMAL="${FORMAT}22$ESC"
+
+RED="${FORMAT}0;31$ESC"
+YELLOW="${FORMAT}0;33$ESC"
+GREEN="${FORMAT}0;32$ESC"
+BLUE="${FORMAT}0;34$ESC"
+MAGENTA="${FORMAT}0;35$ESC"
+
+LB="${DIM}[${NORMAL}"
+RB="${DIM}]${NORMAL}"
+
+WARN="${YELLOW}${LB}WARN${RB}${NC}"
+ERROR="${RED}${LB}ERROR${RB}${NC}"
+INFO="${BLUE}${LB}INFO${RB}${NC}"
+PROMPT="${MAGENTA}${LB}PROMPT${RB}${NC}"
+FIN="${GREEN}${LB}FIN${RB}${NC}"
+
+info() {
+    local msg=$1
+
+    printf "%b\n" "${INFO} ${msg}"
+}
+
+prompt() {
+    local msg=$1
+
+    printf "%b" "${PROMPT} ${msg} "
+}
+
+warn() {
+    local msg=$1
+
+    printf "%b\n" "${WARN} ${msg}"
+}
+
+error() {
+    local msg=$1
+    local exitCode=${2:-1}
+
+    printf "%b\n" "${ERROR} ${msg}; exiting..."
+    exit "$exitCode"
+}
+
+fin() {
+    printf "%b\n" "${FIN}"
+    exit 0
+}
+
+open() {
+    local projName="$1"
+    ${EDITOR:-nano} "$projName"
+    info "opened ${EDITOR:-nano}"
+}
+
+# options
+zip=0
+config=0
+upd=""
+proj=""
+gen=""
+delproj=""
+exec=""
+lint=""
+
+while (($#)); do
+    case "$1" in
+        -h|--help)
+            usage ;;
+        -v|--version)
+            echo "projmanager $VERSION ($VERDATE). used to manage personal projects."
+            exit 0 ;;
+        -z|--zip)
+            zip=1 ;;
+        -o|--open)
+            shift
+            if [[ "$PROJECTS" == *"\"$1\""* ]]; then
+                proj=$1
+            else
+                error "unknown project '$1'"
+            fi ;;
+        -u|--update)
+            shift
+            if [[ "$PROJECTS" == *"\"$1\""* ]]; then
+                upd=$1
+            else
+                error "unknown project '$1'"
+            fi ;;
+        -r|--rm|--remove)
+            shift
+            if [[ "$PROJECTS" == *"\"$1\""* ]]; then
+                delproj=$1
+            else
+                error "unknown project '$1'"
+            fi ;;
+        -g|--generate)
+            shift
+            if [[ ! "$PROJECTS" == *"\"$1\""* ]]; then
+                gen=$1
+            else
+                error "already created project '$1'"
+            fi ;;
+        -c|--config)
+            config=1
+            ;;
+        -x|--execute)
+            shift
+            if [[ "$PROJECTS" == *"\"$1\""* ]]; then
+                exec=$1
+            else
+                error "unknown project '$1'"
+            fi ;;
+        -l|--lint)
+            shift
+            if [[ "$PROJECTS" == *"\"$1\""* ]]; then
+                lint=$1
+            else
+                error "unknown project '$1'"
+            fi ;;
+        *)
+            error "unknown option $1"
+    esac
+    shift
+done
+
+# if they did nothing then do usage
+if [[
+    "$zip" -eq 0 &&
+    "$config" -eq 0 &&
+    -z "$upd" &&
+    -z "$proj" &&
+    -z "$gen" &&
+    -z "$delproj" &&
+    -z "$exec" &&
+    -z "$lint"
+]]; then usage; fi
+
+_zip() {
+    # make temp tozip
+    tmpZip="${PROJ_ROOT}/.tmp"
+    toZipDir="${tmpZip}/projects"
+    mkdir -p "$toZipDir"
+    info "made temporary folder at $toZipDir"
+
+    # copy
+    while IFS= read -r project; do
+        # echo $project
+        fullProjDir="$PROJ_ROOT/$project"
+
+        if cp -a "$fullProjDir" "$toZipDir"; then
+            info "copied ${GREEN}${project}${NC} to $toZipDir"
+        else
+            error "failed to copy over ${RED}${project}${NC} to $toZipDir" "" $?
+        fi
+    done < <(yq -r '.projects[]' "$PROJECT_CONFIG")
+    info "done copying projects"
+    # ls -a $toZipDir
+
+    # make date file
+    timestamp=$(date +"%B %d, %Y")
+    echo "$timestamp" > "${toZipDir}/DATE.txt"
+    info "made date file DATE.txt"
+
+    # ls -a $toZipDir
+
+    (
+        cd "$tmpZip"
+        zip -r projects.zip projects/*
+    )
+    info "done zipping"
+
+    # move to different disk
+    (
+        cd "$tmpZip"
+        sudo mv "projects.zip" "$ARCHIVE"
+    )
+    info "moved to $ARCHIVE"
+
+    # rm temp
+    rm -r "$tmpZip"
+    info "removed temporary folder $tmpZip"
+}
+
+proj() {
+    local projName=$1
+
+    projectDir="${PROJ_ROOT}/${projName}/bin"
+    cd "$projectDir"
+    info "cd to $projectDir"
+    open "$projName"
+}
+
+genproj() {
+    local projName=$1
+
+    newProjDir="${PROJ_ROOT}/${projName}"
+    # exit if newProjDir alr exists
+    if [[ -d $newProjDir ]]; then error "$newProjDir already exists"; fi
+
+    # make bin
+    mkdir -p "${newProjDir}/bin"
+    echo "#!/usr/bin/env $LANGUAGE
+set -euo pipefail" > "${newProjDir}/bin/${projName}"
+    info "generated empty script"
+
+    # make install
+    echo "chmod +x ./$projName
+sudo cp ./$projName /usr/local/bin" > "${newProjDir}/bin/install.sh"
+    info "generated install script"
+
+    # make readme
+    echo "README generated by projmanager ${VERSION}" > "${newProjDir}/README.md"
+    info "generated empty readme"
+
+    # added to project list
+    yq -yi --arg projName "$projName" '.projects += [$projName]' "$PROJECT_CONFIG"
+    info "added $projName to projects.yaml"
+}
+
+rmproj() {
+    local projName=$1
+    prompt "are you sure you would like to delete project ${projName}? [y/N]"
+    read -r choice
+
+    # define delete
+    projDir="${PROJ_ROOT}/${projName}"
+
+    if [[ $choice == "y" ]]; then
+        if [[ ! -d $projDir ]]; then error "missing project file $projDir"; fi
+
+        rm -r "$projDir"
+        warn "removed directory $projDir"
+
+        yq -yi --arg projName "$projName" 'del(.projects[] | select(. == $projName))' "$PROJECT_CONFIG"
+        info "removed $projName from projects.yaml"
+    else
+        info "did not receive 'y', exiting..."
+        exit 0
+    fi
+}
+
+updproj() {
+    local projName="$1"
+    projDir="${PROJ_ROOT}/${projName}/bin"
+
+    info "updating ${projName}..."
+
+    # go into dir (install.sh uses relative path)
+    cd "$projDir"
+    if sudo bash "./install.sh"; then
+        info "${projName} updated"
+    else
+        error "${projDir}/install.sh failed..."
+    fi
+}
+
+execproj() {
+    local projName="$1"
+    runExecutable="${PROJ_ROOT}/${projName}/bin/${projName}"
+
+    # exit if it isnt an executable/doesnt exist
+    if [[ ! -x $runExecutable ]]; then return 1; fi
+
+    # info "found $runExecutable"
+    sudo bash "${runExecutable}"
+}
+
+lintproj() {
+    projName=$1
+
+    projFile="${PROJ_ROOT}/${projName}/bin/${projName}"
+
+    shellcheck "$projFile"
+}
+
+openconf() {
+    [[ -n "$PROJECT_CONFIG" ]] || continue
+
+    info "found $PROJECT_CONFIG"
+    open "$PROJECT_CONFIG"
+}
+
+# exit after doing these
+# handle proj generation
+if [[ -n $gen ]]; then genproj "$gen"; fin; fi
+
+# handle project deletion
+if [[ -n $delproj ]]; then rmproj "$delproj"; fin; fi
+
+# handle opening conf
+if [[ $config -eq 1 ]]; then openconf; fin; fi
+
+# can be paired together
+# handle proj open
+if [[ -n $proj ]]; then proj "$proj"; fi
+
+# handle project updating
+if [[ -n $upd ]]; then updproj "$upd"; fi
+
+# handle project execution
+if [[ -n $exec ]]; then execproj "$exec"; fi
+
+# handle project linting
+if [[ -n $lint ]]; then lintproj "$lint"; fi
+
+# handle zip
+if [[ $zip -eq 1 ]]; then _zip; fi
+fin
