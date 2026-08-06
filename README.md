@@ -10,12 +10,13 @@ personal project manager
 - generate and remove new projects (-g & -r)
 - open config (-c)
 - lint (-l) (literally only uses shellcheck)
-...and hopefully more soon?
+- ...and hopefully more soon?
 
 ## config options
-root: this is the root folder for your projects.
-projects: the directory of your project (root/foo, root/bar)
-archive: directory to put project archives
+- root: this is the root folder for your projects.
+- projects: the directory of your project (root/foo, root/bar)
+- archive: directory to put project archives
+- lang: your preferred coding language (generates new projects with this language)
 
 ```bash
 projmanager -z <project-name>
