@@ -2,47 +2,67 @@
 
 set -euo pipefail
 
-VERSION=1.2
-VERDATE="July 30, 2026"
-
-USERNAME=$(whoami)
+VERSION=1.4.3
+VERDATE="August 06, 2026"
 
 readConfig() {
-    PROJECT_CONFIG="/home/$USERNAME/folders/projects/projmanager/bin/projects.yaml"
+    PROJECT_CONFIG="$HOME/folders/projects/projmanager/bin/projects.yaml"
 
-    PROJ_ROOT=$(yq -r '.root' "$PROJECT_CONFIG")
-    ARCHIVE=$(yq -r '.archive' "$PROJECT_CONFIG")
-    PROJECTS=$(yq -r '.projects' "$PROJECT_CONFIG")
-    LANGUAGE=$(yq -r ".lang" "$PROJECT_CONFIG")
-
-    # PROJ_COUNT=$(yq ".${PROJECTS} | length" "$PROJECT_CONFIG")
+    IFS=$'\t' read -r PROJ_ROOT ARCHIVE PROJECTS LANGUAGE < <(
+        yq -r '[.root, .archive, (.projects | join(" ")), .lang] | @tsv' "$PROJECT_CONFIG"
+    )
 }
-readConfig
+
+projectExists() {
+    yq -e --arg p "$1" '.projects[] | select(. == $p)' "$PROJECT_CONFIG" >/dev/null
+}
+
+requireProj() {
+    local projName="$1"
+    readConfig
+
+    if ! projectExists "$projName"; then
+        error "unknown project '$projName'"
+    fi
+
+    echo "$projName"
+}
+
+requireProjArg() {
+    [[ $# -gt 0 ]] || error "unknown project '$1'"
+
+    requireProj "$1"
+}
 
 # echo $PROJECTS
 
 usage() {
     exitCode=${1:-0}
-    cat <<EOF
-projmanager $VERSION ${VERDATE}
+    printf "%b\n" "
+${BOLD}projmanager${NC}
 
-usage:
+${BOLD}usage:${NC}
     projmanager [arguments]
 
-arguments:
-    -h       help
-    -v       version
-    -z       zip
-    -o       open project (project name)
-    -u       update project (project name)
-    -g       generate new proj
-    -r       remove proj
-    -c       open config
-    -x       eXecute proj
-    -l       lint proj
-
-EOF
+${BOLD}arguments:${NC}
+    -c --conf                       open config
+    -g --gen        <PROJ-NAME>     generate new proj
+    -h --help                       help
+    -l --lint       <PROJ-NAME>     lint proj
+    -o --open       <PROJ-NAME>     open project
+    -p --push       <PROJ-NAME>     use with -u. change project version
+    -r --remove     <PROJ-NAME>     remove proj
+    -u --update     <PROJ-NAME>     update project
+    -v --version                    version of projmanager
+    -x --execute    <PROJ-NAME>     eXecute proj
+    -z --zip                        zip all in projects list
+"
     exit "$exitCode"
+}
+
+ver() {
+    printf "%b\n" "projmanager $BOLD$VERSION$NC ($VERDATE). used to manage personal projects."
+    exit 0
 }
 
 # colors
@@ -51,8 +71,8 @@ ESC="m"
 
 NC="${FORMAT}0$ESC"
 BOLD="${FORMAT}1$ESC"
-DIM="${FORMAT}2$ESC"
-NORMAL="${FORMAT}22$ESC"
+# DIM="${FORMAT}2$ESC"
+# NORMAL="${FORMAT}22$ESC"
 
 RED="${FORMAT}0;31$ESC"
 YELLOW="${FORMAT}0;33$ESC"
@@ -60,14 +80,11 @@ GREEN="${FORMAT}0;32$ESC"
 BLUE="${FORMAT}0;34$ESC"
 MAGENTA="${FORMAT}0;35$ESC"
 
-LB="${DIM}[${NORMAL}"
-RB="${DIM}]${NORMAL}"
-
-WARN="${YELLOW}${LB}WARN${RB}${NC}"
-ERROR="${RED}${LB}ERROR${RB}${NC}"
-INFO="${BLUE}${LB}INFO${RB}${NC}"
-PROMPT="${MAGENTA}${LB}PROMPT${RB}${NC}"
-FIN="${GREEN}${LB}FIN${RB}${NC}"
+WARN="${YELLOW}[WARN]${NC}"
+ERROR="${RED}[ERROR]${NC}"
+INFO="${BLUE}[INFO]${NC}"
+PROMPT="${MAGENTA}[PROMPT]${NC}"
+FIN="${GREEN}[FIN]${NC}"
 
 info() {
     local msg=$1
@@ -115,61 +132,33 @@ gen=""
 delproj=""
 exec=""
 lint=""
+push=0
 
 while (($#)); do
     case "$1" in
         -h|--help)
             usage ;;
         -v|--version)
-            echo "projmanager $VERSION ($VERDATE). used to manage personal projects."
-            exit 0 ;;
+            ver ;;
         -z|--zip)
             zip=1 ;;
         -o|--open)
-            shift
-            if [[ "$PROJECTS" == *"\"$1\""* ]]; then
-                proj=$1
-            else
-                error "unknown project '$1'"
-            fi ;;
+            shift; proj=$(requireProjArg "$1");;
         -u|--update)
-            shift
-            if [[ "$PROJECTS" == *"\"$1\""* ]]; then
-                upd=$1
-            else
-                error "unknown project '$1'"
-            fi ;;
+            shift;
+            if [[ "$1" == "*" ]]; then upd="*"; else upd=$(requireProjArg "$1"); fi;;
+        -p|--push)
+            push=1 ;;
         -r|--rm|--remove)
-            shift
-            if [[ "$PROJECTS" == *"\"$1\""* ]]; then
-                delproj=$1
-            else
-                error "unknown project '$1'"
-            fi ;;
+            shift; delproj=$(requireProjArg "$1");;
         -g|--generate)
-            shift
-            if [[ ! "$PROJECTS" == *"\"$1\""* ]]; then
-                gen=$1
-            else
-                error "already created project '$1'"
-            fi ;;
+            shift; gen=$(requireProjArg "$1");;
         -c|--config)
-            config=1
-            ;;
+            config=1 ;;
         -x|--execute)
-            shift
-            if [[ "$PROJECTS" == *"\"$1\""* ]]; then
-                exec=$1
-            else
-                error "unknown project '$1'"
-            fi ;;
+            shift; exec=$(requireProjArg "$1");;
         -l|--lint)
-            shift
-            if [[ "$PROJECTS" == *"\"$1\""* ]]; then
-                lint=$1
-            else
-                error "unknown project '$1'"
-            fi ;;
+            shift; lint=$(requireProjArg "$1");;
         *)
             error "unknown option $1"
     esac
@@ -185,10 +174,18 @@ if [[
     -z "$gen" &&
     -z "$delproj" &&
     -z "$exec" &&
-    -z "$lint"
+    -z "$lint" &&
+    "$push" -eq 0
 ]]; then usage; fi
 
+# if -p but no -u
+if [[
+    "$push" -eq 1 &&
+    -z "$upd"
+]]; then error "-p needs a supplementary -u"; fi
+
 _zip() {
+    readConfig
     # make temp tozip
     tmpZip="${PROJ_ROOT}/.tmp"
     toZipDir="${tmpZip}/projects"
@@ -200,7 +197,7 @@ _zip() {
         # echo $project
         fullProjDir="$PROJ_ROOT/$project"
 
-        if cp -a "$fullProjDir" "$toZipDir"; then
+        if rsync -a --exclude ".git" "$fullProjDir" "$toZipDir"; then
             info "copied ${GREEN}${project}${NC} to $toZipDir"
         else
             error "failed to copy over ${RED}${project}${NC} to $toZipDir" "" $?
@@ -210,31 +207,41 @@ _zip() {
     # ls -a $toZipDir
 
     # make date file
-    timestamp=$(date +"%B %d, %Y")
+    timestamp=$(date +"%B %d, %Y @ %H:%M:%S")
     echo "$timestamp" > "${toZipDir}/DATE.txt"
-    info "made date file DATE.txt"
+    info "made date file DATE.txt (${timestamp})"
 
     # ls -a $toZipDir
 
     (
         cd "$tmpZip"
-        zip -r projects.zip projects/*
+        zip -r projects.zip ./*
     )
     info "done zipping"
 
-    # move to different disk
+    # move to archive location
     (
         cd "$tmpZip"
         sudo mv "projects.zip" "$ARCHIVE"
     )
     info "moved to $ARCHIVE"
 
+    zipFile="${ARCHIVE}/projects.zip"
+    zipSizeB=$(du -sb "$zipFile" | cut -f1)
+    tmpSizeB=$(du -sb "$tmpZip" | cut -f1)
+    zipSize=$(du -sh "$zipFile" | cut -f1)
+    tmpSize=$(du -sh "$tmpZip" | cut -f1)
+    info "archive size is ${zipSize}iB"
+    info ".tmp size is ${tmpSize}iB"
+    info "~$(( zipSizeB * 100 / tmpSizeB ))% deflation"
+
     # rm temp
-    rm -r "$tmpZip"
+    rm -rf "$tmpZip"
     info "removed temporary folder $tmpZip"
 }
 
 proj() {
+    readConfig
     local projName=$1
 
     projectDir="${PROJ_ROOT}/${projName}/bin"
@@ -244,6 +251,7 @@ proj() {
 }
 
 genproj() {
+    readConfig
     local projName=$1
 
     newProjDir="${PROJ_ROOT}/${projName}"
@@ -262,7 +270,7 @@ sudo cp ./$projName /usr/local/bin" > "${newProjDir}/bin/install.sh"
     info "generated install script"
 
     # make readme
-    echo "README generated by projmanager ${VERSION}" > "${newProjDir}/README.md"
+    echo "# $projName 0.0 by $USER" > "${newProjDir}/README.md"
     info "generated empty readme"
 
     # added to project list
@@ -271,6 +279,7 @@ sudo cp ./$projName /usr/local/bin" > "${newProjDir}/bin/install.sh"
 }
 
 rmproj() {
+    readConfig
     local projName=$1
     prompt "are you sure you would like to delete project ${projName}? [y/N]"
     read -r choice
@@ -293,21 +302,49 @@ rmproj() {
 }
 
 updproj() {
+    readConfig
     local projName="$1"
     projDir="${PROJ_ROOT}/${projName}/bin"
+    projFile="${projDir}/${projName}" # /home/blue/folders/projects/projName/bin/projName
+    readMe="${projDir}/../README.md"
 
-    info "updating ${projName}..."
+    if [[ $push -eq 1 ]]; then
+        oldVer=$(grep '^VERSION=' "$projFile" | cut -d'=' -f2)
+        info "old version is $oldVer"
+        prompt "what should the new version be?"
+        read -r \
+        newVersion
+        newVerDate=$(date +"%B %d, %Y")
 
-    # go into dir (install.sh uses relative path)
+        info "updating ${projName} to $newVersion..." # print special with newVer
+
+        if [[ -z "$newVersion" ]]; then newVersion=${oldVer}; fi
+
+        # echo $projFile
+
+        sed -i \
+            -e "s/^VERSION=.*/VERSION=$newVersion/" \
+            -e "s/^VERDATE=\"[^\"]*\"/VERDATE=\"$newVerDate\"/" \
+            "$projFile"
+        info "changed $oldVer to $newVersion ($newVerDate)"
+        sed -i \
+            "1c\\${projName} by ${USER}: ${newVersion} @ ${newVerDate}" \
+            "$readMe"
+        info "updated first line of ${projName}/README.md"
+    else
+        info "updating ${projName}..." # no special print
+    fi
+
     cd "$projDir"
-    if sudo bash "./install.sh"; then
+    if sudo install -m 755 "./$projName" "/usr/local/bin/$projName"; then
         info "${projName} updated"
     else
-        error "${projDir}/install.sh failed..."
+        error "install -m 755 on ${projName} failed..."
     fi
 }
 
 execproj() {
+    readConfig
     local projName="$1"
     runExecutable="${PROJ_ROOT}/${projName}/bin/${projName}"
 
@@ -319,6 +356,7 @@ execproj() {
 }
 
 lintproj() {
+    readConfig
     projName=$1
 
     projFile="${PROJ_ROOT}/${projName}/bin/${projName}"
@@ -327,7 +365,8 @@ lintproj() {
 }
 
 openconf() {
-    [[ -n "$PROJECT_CONFIG" ]] || continue
+    readConfig
+    [[ -n "$PROJECT_CONFIG" ]] || error "project config not found"
 
     info "found $PROJECT_CONFIG"
     open "$PROJECT_CONFIG"
@@ -343,12 +382,24 @@ if [[ -n $delproj ]]; then rmproj "$delproj"; fin; fi
 # handle opening conf
 if [[ $config -eq 1 ]]; then openconf; fin; fi
 
+# handle project updating
+# echo "${upd}"
+if [[ -n "$upd" ]]; then
+    # if *, update all, otherwise update just 1
+    readConfig
+    if [[ "$upd" == "*" ]]; then
+        for proj in $PROJECTS; do
+            updproj "$proj"
+        done
+    else
+        updproj "$upd"
+    fi
+    fin
+fi
+
 # can be paired together
 # handle proj open
 if [[ -n $proj ]]; then proj "$proj"; fi
-
-# handle project updating
-if [[ -n $upd ]]; then updproj "$upd"; fi
 
 # handle project execution
 if [[ -n $exec ]]; then execproj "$exec"; fi
@@ -359,3 +410,5 @@ if [[ -n $lint ]]; then lintproj "$lint"; fi
 # handle zip
 if [[ $zip -eq 1 ]]; then _zip; fi
 fin
+
+# todo: add pm -i import
