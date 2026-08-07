@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+# set -euo pipefail
 
-VERSION=1.4.3
+VERSION=1.4.5
 VERDATE="August 06, 2026"
 
 readConfig() {
@@ -14,12 +14,12 @@ readConfig() {
 }
 
 projectExists() {
+    readConfig
     yq -e --arg p "$1" '.projects[] | select(. == $p)' "$PROJECT_CONFIG" >/dev/null
 }
 
 requireProj() {
     local projName="$1"
-    readConfig
 
     if ! projectExists "$projName"; then
         error "unknown project '$projName'"
@@ -134,6 +134,7 @@ exec=""
 lint=""
 push=0
 
+# parse
 while (($#)); do
     case "$1" in
         -h|--help)
@@ -152,7 +153,10 @@ while (($#)); do
         -r|--rm|--remove)
             shift; delproj=$(requireProjArg "$1");;
         -g|--generate)
-            shift; gen=$(requireProjArg "$1");;
+            shift;
+            if projectExists $1; then error "project $1 already exists"
+            else gen="$1"; fi
+            ;;
         -c|--config)
             config=1 ;;
         -x|--execute)
@@ -185,7 +189,7 @@ if [[
 ]]; then error "-p needs a supplementary -u"; fi
 
 _zip() {
-    readConfig
+
     # make temp tozip
     tmpZip="${PROJ_ROOT}/.tmp"
     toZipDir="${tmpZip}/projects"
@@ -215,7 +219,7 @@ _zip() {
 
     (
         cd "$tmpZip"
-        zip -r projects.zip ./*
+        zip -r projects.zip ./* &>/dev/null
     )
     info "done zipping"
 
@@ -241,17 +245,17 @@ _zip() {
 }
 
 proj() {
-    readConfig
+
     local projName=$1
 
-    projectDir="${PROJ_ROOT}/${projName}/bin"
-    cd "$projectDir"
-    info "cd to $projectDir"
-    open "$projName"
+    projectDir="${PROJ_ROOT}/${projName}"
+    # cd "$projectDir"
+    # info "cd to $projectDir"
+    open "$projectDir"
 }
 
 genproj() {
-    readConfig
+
     local projName=$1
 
     newProjDir="${PROJ_ROOT}/${projName}"
@@ -261,7 +265,11 @@ genproj() {
     # make bin
     mkdir -p "${newProjDir}/bin"
     echo "#!/usr/bin/env $LANGUAGE
-set -euo pipefail" > "${newProjDir}/bin/${projName}"
+set -euo pipefail
+
+VER=\"0.0\"
+VERDATE=\"$(date +%B %d, %Y)\"
+" > "${newProjDir}/bin/${projName}"
     info "generated empty script"
 
     # make install
@@ -279,7 +287,7 @@ sudo cp ./$projName /usr/local/bin" > "${newProjDir}/bin/install.sh"
 }
 
 rmproj() {
-    readConfig
+
     local projName=$1
     prompt "are you sure you would like to delete project ${projName}? [y/N]"
     read -r choice
@@ -302,13 +310,13 @@ rmproj() {
 }
 
 updproj() {
-    readConfig
     local projName="$1"
     projDir="${PROJ_ROOT}/${projName}/bin"
     projFile="${projDir}/${projName}" # /home/blue/folders/projects/projName/bin/projName
     readMe="${projDir}/../README.md"
 
     if [[ $push -eq 1 ]]; then
+        info "looking for VERSION= and VERDATE="
         oldVer=$(grep '^VERSION=' "$projFile" | cut -d'=' -f2)
         info "old version is $oldVer"
         prompt "what should the new version be?"
@@ -321,6 +329,9 @@ updproj() {
         if [[ -z "$newVersion" ]]; then newVersion=${oldVer}; fi
 
         # echo $projFile
+
+        prompt "save $projName before changing version:"
+        read
 
         sed -i \
             -e "s/^VERSION=.*/VERSION=$newVersion/" \
@@ -344,7 +355,7 @@ updproj() {
 }
 
 execproj() {
-    readConfig
+
     local projName="$1"
     runExecutable="${PROJ_ROOT}/${projName}/bin/${projName}"
 
@@ -356,7 +367,7 @@ execproj() {
 }
 
 lintproj() {
-    readConfig
+
     projName=$1
 
     projFile="${PROJ_ROOT}/${projName}/bin/${projName}"
@@ -365,7 +376,7 @@ lintproj() {
 }
 
 openconf() {
-    readConfig
+
     [[ -n "$PROJECT_CONFIG" ]] || error "project config not found"
 
     info "found $PROJECT_CONFIG"
@@ -374,19 +385,25 @@ openconf() {
 
 # exit after doing these
 # handle proj generation
-if [[ -n $gen ]]; then genproj "$gen"; fin; fi
+if [[ -n $gen ]]; then
+    readConfig
+    genproj "$gen"; fin; fi
 
 # handle project deletion
-if [[ -n $delproj ]]; then rmproj "$delproj"; fin; fi
+if [[ -n $delproj ]]; then
+    readConfig
+    rmproj "$delproj"; fin; fi
 
 # handle opening conf
-if [[ $config -eq 1 ]]; then openconf; fin; fi
+if [[ $config -eq 1 ]]; then
+    readConfig
+    openconf; fin; fi
 
 # handle project updating
-# echo "${upd}"
 if [[ -n "$upd" ]]; then
-    # if *, update all, otherwise update just 1
     readConfig
+    # if *, update all, otherwise update just 1
+
     if [[ "$upd" == "*" ]]; then
         for proj in $PROJECTS; do
             updproj "$proj"
@@ -399,16 +416,24 @@ fi
 
 # can be paired together
 # handle proj open
-if [[ -n $proj ]]; then proj "$proj"; fi
+if [[ -n $proj ]]; then
+    readConfig
+    proj "$proj"; fi
 
 # handle project execution
-if [[ -n $exec ]]; then execproj "$exec"; fi
+if [[ -n $exec ]]; then
+    readConfig
+    execproj "$exec"; fi
 
 # handle project linting
-if [[ -n $lint ]]; then lintproj "$lint"; fi
+if [[ -n $lint ]]; then
+    readConfig
+    lintproj "$lint"; fi
 
 # handle zip
-if [[ $zip -eq 1 ]]; then _zip; fi
+if [[ $zip -eq 1 ]]; then
+    readConfig
+    _zip; fi
 fin
 
 # todo: add pm -i import

@@ -1,4 +1,4 @@
-# projmanager by blue: 1.4.3 @ August 06, 2026
+projmanager by blue: 1.4.5 @ August 06, 2026
 [![Bash](https://img.shields.io/badge/Bash-4EAA25?logo=gnubash&logoColor=fff)](#)
 [![GitHub](https://img.shields.io/badge/GitHub-%23121011.svg?logo=github&logoColor=white)](#)
 

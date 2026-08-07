@@ -1,2 +1,2 @@
 chmod +x ./projmanager
-sudo cp ./projmanager /usr/local/bin
+sudo install -m 755 ./projmanager /usr/local/bin
