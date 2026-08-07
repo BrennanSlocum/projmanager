@@ -1,21 +1,23 @@
-projmanager by blue: 1.4.5 @ August 06, 2026
+projmanager by blue: 1.5 @ August 07, 2026
 [![Bash](https://img.shields.io/badge/Bash-4EAA25?logo=gnubash&logoColor=fff)](#)
 [![GitHub](https://img.shields.io/badge/GitHub-%23121011.svg?logo=github&logoColor=white)](#)
 
 personal project manager
-## tools:
-- archive projects (-z)
-- update projects to /usr/local/bin (-u)
-- update project versions (-p)
-- generate and remove new projects (-g & -r)
-- open config (-c)
-- lint (-l) (literally only uses shellcheck)
+## options:
+- -z: archive projects
+- -u: update projects to /usr/local/bin
+- -U: update project versions
+- -g: generate project
+- -r: remove project
+- -c: open config
+- -i: import projects.zip
+- -l: lint (literally only uses shellcheck)
 - ...and hopefully more soon?
 
 ## config options
 - root: this is the root folder for your projects.
-- projects: the directory of your project (root/foo, root/bar)
-- archive: directory to put project archives
+- projects: the directory of your project (root/project1, root/project2)
+- archive: directory to put project archives (see projmanager -z)
 - lang: your preferred coding language (generates new projects with this language)
 
 ```bash
@@ -44,5 +46,10 @@ projmanager -c
 ```
 ...opens config
 
+```bash
+projmanager -i projects.zip
+```
+...looks for projects.zip and replaces all projects (prompted)
+
 ## todo
-- [ ] -i import option for -z
+none :)
