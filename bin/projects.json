@@ -13,6 +13,7 @@
     "quotereader",
     "shortcut",
     "dvhelper",
-    "todo"
+    "todo",
+    "obshandler"
   ]
 }

@@ -1,0 +1,354 @@
+🔴 15. Import can silently replace projects with no project-list update
+
+You replace the directory:
+
+rsync -a --delete "$impProject/" "$projRootEquivalent/"
+
+but don't update:
+
+.projects
+
+If the archive contains a project that isn't in the current configuration, you've now created a project directory that
+projmanager doesn't know about.
+
+Likewise, if you intentionally want imports to restore the project list, you currently don't restore it.
+
+This is probably worth deciding explicitly:
+
+Should importing an archive restore the project configuration too?
+
+I suspect the answer is yes.
+
+------------------------------------------------------------------
+Overall: pretty solid for a personal Bash utility. The structure is easy to follow, functions are reasonably separated,
+and set -euo pipefail plus quoting in most filesystem operations is good. The biggest weaknesses are around import
+atomicity, configuration consistency, path validation, and a couple of subtle Bash bugs.
+
+Your two observations are good, but #14 needs one important qualification.
+
+14. importproj() and deleting the original ZIP
+
+You have:
+
+rsync -a -- "$originalZip" "$tmpImp/"
+cd "$tmpImp"
+unzip "$originalZip"
+rm -f -- "$originalZip"
+
+If the user runs:
+
+projmanager --import projects.zip
+
+then originalZip is just projects.zip, so after cd "$tmpImp", the rm deletes:
+
+$PROJ_ROOT/.imptmp/projects.zip
+
+—not the original ZIP.
+
+However, if they run:
+
+projmanager --import /some/path/projects.zip
+
+then rm -f "$originalZip" does delete the user's original archive.
+
+So the bug is real, but only for an absolute/path-qualified argument.
+
+I'd simply remove the rm entirely. The temporary copy gets removed when .imptmp is removed anyway.
+
+15. Import/config synchronization
+
+Interestingly, your current code does partially solve this already:
+
+jq '.projects = []' "$PROJECT_CONFIG" > "$tmp" && mv "$tmp" "$PROJECT_CONFIG"
+
+and then for every imported project:
+
+jq --arg projName "$baseDir" \
+    '.projects += [$projName]' \
+    "$PROJECT_CONFIG" > "$tmp" && mv "$tmp" "$PROJECT_CONFIG"
+
+So an imported archive does rebuild .projects.
+
+The bigger problem is that you rebuild it before you know the import will succeed.
+
+For example:
+
+Existing config has 10 projects.
+Import starts.
+.projects immediately becomes [].
+Unzip fails.
+Script exits because of set -e.
+User now has an empty project list.
+
+That's considerably more serious than the directory/list mismatch.
+
+I'd make import transactional
+
+Build the imported project list in memory/temp config first, perform the import, and only replace projects.json after
+the whole operation succeeds.
+
+Conceptually:
+
+projects.json
+     │
+     ├── make temporary config
+     │
+     ├── extract archive
+     │
+     ├── validate archive
+     │
+     ├── import projects
+     │
+     └── SUCCESS
+            │
+            └── replace projects.json
+
+rather than:
+
+projects.json
+     │
+     └── immediately erase project list
+              │
+              └── hope import succeeds
+Bugs I'd fix next
+🔴 3. Import isn't atomic
+
+This is the bigger import problem mentioned above.
+
+You also modify projects.json repeatedly:
+
+jq ... "$PROJECT_CONFIG" > "$tmp" && mv "$tmp" "$PROJECT_CONFIG"
+
+inside the import loop.
+
+If project #1 succeeds and project #2 fails, you're left with:
+
+project #1 replaced
+project #2 possibly untouched
+project list partially rebuilt
+temporary directory eventually potentially left behind because error exits immediately
+
+That's a nasty failure mode.
+
+I'd strongly consider making import an all-or-nothing operation.
+
+🟠 6. -U project doesn't actually determine the old version
+
+For:
+
+projmanager -U foo
+
+you call:
+
+updproj "$upd"
+
+so inside:
+
+local oldVer="${2:-}"
+
+oldVer is empty.
+
+You then print:
+
+info "old version is ${oldVer}"
+
+and compare:
+
+if [[ "$newVersion" != "$oldVer" ]]; then
+
+For -U '*', you correctly obtain oldVer beforehand.
+
+For a single project, you don't.
+
+I'd have updproj() read the current version itself. That makes the function self-contained and prevents the two code
+paths from behaving differently.
+
+🟠 7. sed can silently fail to make the intended change
+
+You have:
+
+sed -i \
+    -e "1,10 s/^VERSION=.*/VERSION=$newVersion/" \
+    -e "1,10 s/^VERDATE=\"[^\"]*\"/VERDATE=\"$newVerDate\"/" \
+    "$projFile"
+
+sed returns success even if it didn't find either pattern.
+
+So this:
+
+info "changed $oldVer to $newVersion"
+
+can be printed even when VERSION= wasn't present in the first 10 lines.
+
+Same issue with:
+
+sed -i "1c\\..." "$readMe"
+
+I'd validate the file structure before editing it.
+
+🟠 9. EDITOR handling isn't quite right
+
+You do:
+
+editor="${EDITOR:-nano}"
+
+if "$editor" "$projName"; then
+
+This works for:
+
+EDITOR=nano
+EDITOR=vim
+
+but not for common values such as:
+
+EDITOR="code --wait"
+
+because Bash treats "code --wait" as one executable name.
+
+If you want to support command-style $EDITOR values, you need a different approach. Alternatively, document that EDITOR
+must contain only the executable.
+
+🟡 11. --import has surprising interaction with --zip
+
+Your parser allows combinations of essentially everything:
+
+projmanager -z -i
+projmanager -g foo -r bar -u baz
+
+and then executes all selected operations sequentially.
+
+You even comment:
+
+# can be paired together
+
+for some operations, so this appears intentional.
+
+But --import plus --zip can produce confusing behavior depending on ordering.
+
+I'd either:
+
+explicitly document which options can combine, or
+reject incompatible combinations.
+
+🟡 12. --import always assumes projects.zip
+
+This:
+
+projZip="$PROJ_ROOT/projects.zip"
+
+means:
+
+projmanager --import
+
+doesn't actually let the user specify an archive.
+
+That's consistent with your help text:
+
+-i --import    import a -z archive
+
+so it's not necessarily a bug. But I'd probably make it:
+
+-i --import <ARCHIVE>
+
+eventually.
+
+That would also make the command much more intuitive.
+
+🟡 13. projectExists() repeatedly parses the config
+
+During argument parsing, this:
+
+projectExists "$1"
+
+calls:
+
+readConfig
+
+every time.
+
+So something like:
+
+projmanager -o foo -u bar -r baz -x qux
+
+can repeatedly read and parse the same JSON file.
+
+Not a correctness problem at your scale, but you could load config once after argument parsing—or have projectExists use
+the already-loaded PROJECTS array.
+
+🟢 Things I particularly like
+
+A few things are better than they might look at first glance.
+
+Good use of arrays
+
+This is exactly the right approach:
+
+local rsyncArgs
+rsyncArgs=(-a)
+
+case "$choice" in
+    y) : ;;
+    n|*) rsyncArgs+=(--exclude=".git") ;;
+esac
+
+rsync "${rsyncArgs[@]}" ...
+
+Much safer than constructing a command string.
+
+Good quoting discipline
+
+You've consistently used:
+
+"$PROJ_ROOT"
+"$projName"
+"$PROJECT_CONFIG"
+"$tmp"
+
+instead of unquoted expansions. That's one of the biggest things that makes Bash scripts reliable.
+
+set -euo pipefail
+
+For this kind of script, that's a good baseline. You clearly understand that it changes how errors propagate, although
+some of your current code needs to account for that—especially import cleanup.
+
+The UI is actually quite nice
+
+The:
+
+[INFO]
+[WARN]
+[ERROR]
+[PROMPT]
+[FIN]
+
+scheme plus:
+
+[✓]
+[X]
+
+makes this feel like a real CLI rather than a collection of shell commands.
+
+What I'd prioritize
+
+If this were my script, I'd fix these in this order:
+
+Priority	Issue
+🔴	Fix broken rmproj() mv
+🔴	Fix undefined $config under set -u
+🔴	Make import atomic
+🔴	Don't delete the supplied archive
+🔴	Add import cleanup trap
+🔴	Fix import existence validation
+🟠	Validate project names
+🟠	Make -U foo obtain the actual current version
+🟠	Make sed modifications verifiable
+🟡	Guard ZIP division by zero
+🟡	Normalize VERDATE parsing
+🟡	Decide/document which options can be combined
+
+The architecture itself doesn't need a rewrite. I'd keep the overall procedural/function-based design. The next
+meaningful improvement is making operations like import, generate, and remove transaction-safe so an error halfway
+through doesn't leave projects.json and the filesystem disagreeing.
+
+And one correction to your #15: your current import does update .projects; the real bug is that it updates it too early
+and non-atomically

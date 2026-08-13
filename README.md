@@ -1,4 +1,4 @@
-projmanager by blue: 1.5 @ August 07, 2026
+projmanager by blue: 1.6.2 @ August 13, 2026
 [![Bash](https://img.shields.io/badge/Bash-4EAA25?logo=gnubash&logoColor=fff)](#)
 [![GitHub](https://img.shields.io/badge/GitHub-%23121011.svg?logo=github&logoColor=white)](#)
 
@@ -31,7 +31,7 @@ projmanager -u <project-name>
 ...updates local (root/project-name) to global (/usr/local/bin)
 
 ```bash
-projmanager -p -u <project-name>
+projmanager -U <project-name>
 ```
 ...updates and prompts for new version (writes to the FIRST LINE in a readme file)
 
@@ -52,4 +52,4 @@ projmanager -i projects.zip
 ...looks for projects.zip and replaces all projects (prompted)
 
 ## todo
-none :)
+- [ ] fix bugs.......

@@ -1,40 +1,9 @@
 #!/usr/bin/env bash
 
-# set -euo pipefail
+set -euo pipefail
 
-VERSION=1.5
-VERDATE="August 07, 2026"
-
-readConfig() {
-    PROJECT_CONFIG="$HOME/folders/projects/projmanager/bin/projects.json"
-
-    IFS=$'\t' read -r PROJ_ROOT ARCHIVE PROJECTS LANGUAGE < <(
-        jq -r '[.root, .archive, (.projects | join(" ")), .lang] | @tsv' "$PROJECT_CONFIG"
-    )
-}
-
-projectExists() {
-    readConfig
-    jq -e --arg p "$1" '.projects[] | select(. == $p)' "$PROJECT_CONFIG" >/dev/null
-}
-
-requireProj() {
-    local projName="$1"
-
-    if ! projectExists "$projName"; then
-        error "unknown project '$projName'"
-    fi
-
-    echo "$projName"
-}
-
-requireProjArg() {
-    [[ $# -gt 0 ]] || error "unknown project '$1'"
-
-    requireProj "$1"
-}
-
-# echo $PROJECTS
+VERSION=1.6.2
+VERDATE="August 13, 2026"
 
 usage() {
     exitCode=${1:-0}
@@ -48,11 +17,12 @@ ${BOLD}arguments:${NC}
     -c --conf                       open config
     -g --gen        <PROJ-NAME>     generate new proj
     -h --help                       help
+    -i --import                     import a -z archive
     -l --lint       <PROJ-NAME>     lint proj
     -o --open       <PROJ-NAME>     open project
-    -p --push       <PROJ-NAME>     change project version (-U)
     -r --remove     <PROJ-NAME>     remove proj
     -u --update     <PROJ-NAME>     update project
+    -U --updpush    <PROJ-NAME>     update and change proj version
     -v --version                    version of projmanager
     -x --execute    <PROJ-NAME>     eXecute proj
     -z --zip                        zip all in projects list
@@ -79,7 +49,7 @@ YELLOW="${FORMAT}0;33$ESC"
 GREEN="${FORMAT}0;32$ESC"
 BLUE="${FORMAT}0;34$ESC"
 MAGENTA="${FORMAT}0;35$ESC"
-GRAY="${FORMAT}0;61$ESC"
+# GRAY="${FORMAT}0;61$ESC"
 
 WARN="${YELLOW}${BOLD}[WARN]${NC}"
 ERROR="${RED}${BOLD}[ERROR]${NC}"
@@ -87,10 +57,17 @@ INFO="${BLUE}${BOLD}[INFO]${NC}"
 PROMPT="${MAGENTA}${BOLD}[PROMPT]${NC}"
 FIN="${GREEN}${BOLD}[FIN]${NC}"
 
+GREENCHECK="[${GREEN}✓${NC}]"
+REDX="[${RED}X${NC}]"
+
 info() {
     local msg=$1
-
     printf "%b\n" "${INFO} ${msg}"
+}
+
+infoReplace() {
+    local msg=$1
+    printf "\033[1A\033[2K%b\n" "${INFO} ${msg}"
 }
 
 prompt() {
@@ -109,19 +86,72 @@ error() {
     local msg=$1
     local exitCode=${2:-1}
 
-    printf "%b\n" "${ERROR} ${msg}; exiting..."
+    printf "%b\n" "${ERROR} ${msg}; exiting ($exitCode)..."
     exit "$exitCode"
 }
 
 fin() {
     printf "%b\n" "${FIN}"
-    exit 0
+    # exit 0
 }
 
 open() {
     local projName="$1"
-    ${EDITOR:-nano} "$projName"
-    info "opened ${EDITOR:-nano}"
+    local editor
+    editor="${EDITOR:-nano}"
+    if "$editor" "$projName"; then
+        info "opened ${editor}"
+    else
+        error "failed to open ${editor}"
+    fi
+}
+
+readConfig() {
+    PROJECT_CONFIG="$HOME/folders/projects/projmanager/bin/projects.json"
+
+    [[ -f "$PROJECT_CONFIG" ]] || error "config not found: $PROJECT_CONFIG"
+
+    # validate
+    if ! jq -e '
+        (.root | strings) and
+        (.archive | strings) and
+        (.lang | strings) and
+        (.projects | type == "array") and
+        (.projects | all(.[]; type == "string"))
+    ' "$PROJECT_CONFIG" >/dev/null; then
+        error "invalid project config: $config"
+    fi
+
+    # read
+    IFS=$'\t' read -r PROJ_ROOT ARCHIVE LANGUAGE < <(
+        jq -r '[.root, .archive, .lang] | @tsv' "$PROJECT_CONFIG"
+    )
+
+    # read project list
+    mapfile -t PROJECTS < <(
+        jq -r '.projects[]' "$PROJECT_CONFIG"
+    )
+}
+
+projectExists() {
+    readConfig
+    jq -e --arg p "$1" '.projects[] | select(. == $p)' "$PROJECT_CONFIG" >/dev/null
+}
+
+requireProj() {
+    local projName="$1"
+
+    if ! projectExists "$projName"; then
+        error "unknown project '$projName'"
+    fi
+
+    echo "$projName"
+}
+
+requireProjArg() {
+    [[ $# -gt 0 ]] || error "unknown project '$1'"
+
+    requireProj "$1"
 }
 
 # options
@@ -146,33 +176,47 @@ while (($#)); do
         -z|--zip)
             zip=1 ;;
         -o|--open)
-            shift; proj=$(requireProjArg "$1");;
+            shift
+            [[ $# -gt 0 ]] || error "-o|--open requires a project name"
+            proj=$(requireProjArg "$1");;
         -u|--update)
             shift;
+            [[ $# -gt 0 ]] || error "-u|--update requires a project name"
             if [[ "$1" == "*" ]]; then upd="*"; else upd=$(requireProjArg "$1"); fi;;
-        -U|-p|--push)
+        -U|--updpush)
             push=1
             shift;
+            [[ $# -gt 0 ]] || error "-U|--updpush requires a project name"
             if [[ "$1" == "*" ]]; then upd="*"; else upd=$(requireProjArg "$1"); fi;;
         -r|--rm|--remove)
-            shift; delproj=$(requireProjArg "$1");;
+            shift
+            [[ $# -gt 0 ]] || error "-r|--rm|--remove requires a project name"
+            delproj=$(requireProjArg "$1")
+            echo "z";;
         -g|--gen|--generate)
             shift;
-            if projectExists $1; then error "project $1 already exists"
+            [[ $# -gt 0 ]] || error "-g|--gen requires a project name"
+            if projectExists "$1"; then error "project $1 already exists"
             else gen="$1"; fi
             ;;
         -c|--config)
             config=1 ;;
         -x|--execute)
-            shift; exec=$(requireProjArg "$1");;
-        -l|--lint)
-            shift; lint=$(requireProjArg "$1");;
-        -i|--import)
             shift
-            if [[ -e "$1" && "$1" == "projects.zip" ]]; then
-                import="$1"
+            [[ $# -gt 0 ]] || error "-x|--execute requires a project name"
+            exec=$(requireProjArg "$1");;
+        -l|--lint)
+            shift
+            [[ $# -gt 0 ]] || error "-l|--lint requires a project name"
+            lint=$(requireProjArg "$1");;
+        -i|--import)
+            readConfig
+            projZip="$PROJ_ROOT/projects.zip"
+            if [[ -e "$projZip" ]]; then
+                info "found projects.zip"
+                import="projects.zip"
             else
-                error "must import a 'projects.zip' file"
+                error "projects.zip not found"
             fi;;
         *)
             error "unknown option $1"
@@ -180,50 +224,46 @@ while (($#)); do
     shift
 done
 
-# if they did nothing then do usage
-if [[
-    "$zip" -eq 0 &&
-    "$config" -eq 0 &&
-    -z "$upd" &&
-    -z "$proj" &&
-    -z "$gen" &&
-    -z "$delproj" &&
-    -z "$exec" &&
-    -z "$lint" &&
-    "$push" -eq 0 &&
-    -z "$import"
-]]; then error "needs atleast 1 argument"; usage; fi
-
-# if -p but no -u
-if [[
-    "$push" -eq 1 &&
-    -z "$upd"
-]]; then error "-p needs a supplementary -u"; fi
+if [[ "$zip" -eq 0 && "$config" -eq 0 && "$push" -eq 0 && \
+    -z "$upd" && -z "$proj" && -z "$gen" && -z "$delproj" && \
+    -z "$exec" && -z "$lint" && -z "$import" ]]; then
+    info "no arguments found: use -h or --help for info"
+fi
 
 _zip() {
-
     # make temp tozip
+    local tmpZip
     tmpZip="${PROJ_ROOT}/.ziptmp"
+
     toZipDir="${tmpZip}/projects"
-    mkdir -p "$toZipDir"
-    info "made temporary folder at $toZipDir"
+
+    cleanupToZip() {
+        rm -rf -- "$toZipDir"
+    }
+
+    [[ -d "$toZipDir" ]] && cleanupToZip
+
+    if mkdir -p -- "$toZipDir"; then info "made temporary folder at $toZipDir"; trap cleanupToZip EXIT;
+    else error "failed to make temporary folder at $toZipDir"; fi
 
     prompt "include .git repo data? [y/N]"
     read -r choice < /dev/tty
 
+    local rsyncArgs
     rsyncArgs=(-a)
     case "$choice" in
         y)
-            :;;
+            : ;;
         n|*)
             rsyncArgs+=(--exclude=".git");;
     esac
     # copy
     while IFS= read -r project; do
         # echo $project
+        local fullProjDir
         fullProjDir="$PROJ_ROOT/$project"
 
-        if rsync ${rsyncArgs[@]} "$fullProjDir" "$toZipDir"; then
+        if rsync "${rsyncArgs[@]}" "$fullProjDir" "$toZipDir"; then
             info "copied ${GREEN}${project}${NC} to $toZipDir"
         else
             error "failed to copy over ${RED}${project}${NC} to $toZipDir" $?
@@ -232,54 +272,90 @@ _zip() {
     info "done copying projects"
     # ls -a $toZipDir
 
+    # sleep 1
+
     # make date file
+    local timestamp
     timestamp=$(date +"%B %d, %Y @ %H:%M:%S")
     echo "$timestamp" > "${toZipDir}/DATE.txt"
     info "made date file DATE.txt (${timestamp})"
 
     # ls -a $toZipDir
 
-    (
-        cd "$tmpZip"
+    if (
+        cd "$tmpZip" || exit 1
         zip -r projects.zip ./* &>/dev/null
-    )
-    info "done zipping"
+    ); then
+        info "done zipping"
+    else
+        error "failed to create archive"
+    fi
+
+    # measure deflation
+    local zipFile
+    zipFile="${tmpZip}/projects.zip"
+
+    local zipSizeB
+    local tmpSizeB
+    local zipSize
+    local projectsSizeB
+    local projectsSize
+    # local tmpSize
+    zipSizeB=$(du -sb "$zipFile" | cut -f1) # byte size of archive
+    tmpSizeB=$(du -sb "$tmpZip" | cut -f1) # byte size of projects + archive
+    zipSize=$(du -sh "$zipFile" | cut -f1) # human readable size of archive
+    # tmpSize=$(du -sh "$tmpZip" | cut -f1)
+    projectsSizeB=$(( tmpSizeB - zipSizeB )) # (projects+archive) - archive
+    projectsSize=$(numfmt --to=iec --format='%.0f' "$projectsSizeB") # human readable projectsSize
+    info "archive size is ${zipSize}B"
+    info "projects size is ${projectsSize}B"
+
+    if (( projectsSizeB > 0 )); then
+        info "$(( 100 - (zipSizeB * 100 / projectsSizeB) ))% deflation"
+    else
+        warn "empty projects"
+    fi
+
+    # tmpSizeB = (projects + zipSizeB)
 
     # move to archive location
-    (
-        cd "$tmpZip"
-        sudo mv "projects.zip" "$ARCHIVE"
-    )
-    info "moved to $ARCHIVE"
-
-    zipFile="${ARCHIVE}/projects.zip"
-    zipSizeB=$(du -sb "$zipFile" | cut -f1)
-    tmpSizeB=$(du -sb "$tmpZip" | cut -f1)
-    zipSize=$(du -sh "$zipFile" | cut -f1)
-    tmpSize=$(du -sh "$tmpZip" | cut -f1)
-    info "archive size is ${zipSize}iB"
-    info "projects size is ${tmpSize}iB"
-    info "~$(( zipSizeB * 100 / tmpSizeB ))% deflation"
+    if (
+        cd "$tmpZip" || exit
+        mv "projects.zip" "$ARCHIVE"
+    ); then
+        info "moved to $ARCHIVE"
+    else
+        error "failed to move to $tmpZip"
+    fi
 
     # rm temp
-    rm -rf "$tmpZip"
-    info "removed temporary folder $tmpZip"
+    if rm -rf "$tmpZip"; then
+        info "removed temporary folder $tmpZip"
+    else
+        error "failed to remove temporary folder $tmpZip"
+    fi
 }
 
 proj() {
-
     local projName=$1
 
+    local projectDir
     projectDir="${PROJ_ROOT}/${projName}"
+
     # cd "$projectDir"
     # info "cd to $projectDir"
     open "$projectDir"
 }
 
 genproj() {
-
     local projName=$1
 
+    # validate project name
+    if projectExists "$projName"; then
+        error "invalid project name $projName"
+    fi
+
+    local newProjDir
     newProjDir="${PROJ_ROOT}/${projName}"
     # exit if newProjDir alr exists
     if [[ -d $newProjDir ]]; then error "$newProjDir already exists"; fi
@@ -289,14 +365,15 @@ genproj() {
     echo "#!/usr/bin/env $LANGUAGE
 set -euo pipefail
 
-VER=\"0.0\"
-VERDATE=\"$(date +%B %d, %Y)\"
+VERSION=0.0
+VERDATE=\"$(date +"%B %d, %Y")\"
 " > "${newProjDir}/bin/${projName}"
     info "generated empty script"
 
     # make install
-    echo "chmod +x ./$projName
-sudo cp ./$projName /usr/local/bin" > "${newProjDir}/bin/install.sh"
+    echo "#!/usr/bin/env $LANGUAGE
+chmod +x ./$projName
+install -m 755 ./$projName /usr/local/bin" > "${newProjDir}/bin/install.sh"
     info "generated install script"
 
     # make readme
@@ -304,29 +381,42 @@ sudo cp ./$projName /usr/local/bin" > "${newProjDir}/bin/install.sh"
     info "generated empty readme"
 
     # added to project list
+    local tmp
     tmp=$(mktemp)
-    jq --arg projName "$projName" '.projects += [$projName]' "$PROJECT_CONFIG" > "$tmp" && mv "$tmp" "$PROJECT_CONFIG"
-    info "added $projName to projects.yaml"
+    if jq --arg projName "$projName" \
+    'del(.projects[] | select(. == $projName))' \
+    "$PROJECT_CONFIG" \
+    > "$tmp"; then
+        mv "$tmp" "$PROJECT_CONFIG"
+        info "added $projName to projects.json"
+    else
+        rm "$tmp"
+        warn "failed to add $projName"
+    fi
 }
 
 rmproj() {
-
     local projName=$1
+    local choice
+
     prompt "are you sure you would like to delete project ${projName}? [y/N]"
     read -r choice
 
     # define delete
+    local projDir
     projDir="${PROJ_ROOT}/${projName}"
 
-    if [[ $choice == "y" ]]; then
+    if [[ "$choice" == "y" ]]; then
         if [[ ! -d $projDir ]]; then error "missing project file $projDir"; fi
 
-        rm -r "$projDir"
+        rm -rf -- "$projDir"
         warn "removed directory $projDir"
 
+        local tmp
         tmp=$(mktemp)
-        jq --arg projName "$projName" 'del(.projects[] | select(. == $projName))' "$PROJECT_CONFIG" > "$tmp" && mv "$tmp" "$PROJECT_CONFIG"
-        info "removed $projName from projects.yaml"
+        jq --arg projName "$projName" 'del(.projects[] | select(. == $projName))' "$PROJECT_CONFIG" > "$tmp" && mv
+"$tmp" "$PROJECT_CONFIG"
+        info "removed $projName from projects.json"
     else
         info "did not receive 'y', exiting..."
         exit 0
@@ -335,134 +425,210 @@ rmproj() {
 
 updproj() {
     local projName="$1"
+    local oldVer="${2:-}"
+
+    local projDir
+    local projFile
+    local readMe
+
     projDir="${PROJ_ROOT}/${projName}/bin"
-    projFile="${projDir}/${projName}" # /home/blue/folders/projects/projName/bin/projName
+    projFile="${projDir}/${projName}" #/home/blue/folders/projects/projName/bin/projName
     readMe="${projDir}/../README.md"
 
     if [[ $push -eq 1 ]]; then
-        info "looking for VERSION= and VERDATE="
-        oldVer=$(grep '^VERSION=' "$projFile" | cut -d'=' -f2)
-        info "old version is $oldVer"
+        # info "looking for VERSION= and VERDATE="
+        info "selected project: $BOLD$projName${NC}"
+        info "old version is ${oldVer}"
         prompt "what should the new version be?"
+        local newVersion
         read -r \
         newVersion
+        local newVerDate
         newVerDate=$(date +"%B %d, %Y")
 
-        info "updating ${projName} to $newVersion..." # print special with newVer
-
-        if [[ -z "$newVersion" ]]; then newVersion=${oldVer}; fi
+        if [[ -z "$newVersion" ]]; then newVersion=${oldVer};
+        info "skipping... (received no input)"; fi
 
         # echo $projFile
 
-        prompt "save $projName before changing version:"
-        read
+        if [[ "$newVersion" != "$oldVer" ]]; then
+            prompt "save $projName before changing version:"
+            read -r
 
-        sed -i \
-            -e "s/^VERSION=.*/VERSION=$newVersion/" \
-            -e "s/^VERDATE=\"[^\"]*\"/VERDATE=\"$newVerDate\"/" \
-            "$projFile"
-        info "changed $oldVer to $newVersion ($newVerDate)"
-        sed -i \
-            "1c\\${projName} by ${USER}: ${newVersion} @ ${newVerDate}" \
-            "$readMe"
-        info "updated first line of ${projName}/README.md"
+            if [[ ! "$newVersion" =~ ^[0-9]+(\.[0-9]+)*([_-][0-9]+)?$ ]]; then error "invalid version '$newVersion'"; fi
+
+            if sed -i \
+                -e "1,10 s/^VERSION=.*/VERSION=$newVersion/" \
+                -e "1,10 s/^VERDATE=\"[^\"]*\"/VERDATE=\"$newVerDate\"/" \
+                "$projFile"; then
+                info "changed $oldVer to $newVersion ($newVerDate)"
+            else
+                error "failed to change $oldVer to $newVersion ($newVerDate)"
+            fi
+
+            if sed -i \
+                "1c\\${projName} by ${USER}: ${newVersion} @ ${newVerDate}" \
+                "$readMe"; then
+                info "updated first line of README.md"
+            else
+                error "failed to update README.md"
+            fi
+            prompt "open readme? [y/N]"
+            local readMeOpen && read -r readMeOpen
+
+            if [[ "$readMeOpen" == "y" ]]; then open "$readMe"; fi
+            info "updating ${projName} to $newVersion..." # print special with newVer
+        fi
     else
         info "updating ${projName}..." # no special print
     fi
 
-    cd "$projDir"
+    cd "$projDir" || error "failed to enter $projDir"
     if sudo install -m 755 "./$projName" "/usr/local/bin/$projName"; then
-        info "${projName} updated"
+        infoReplace "${projName} updated ${GREENCHECK}"
     else
-        error "install -m 755 on ${projName} failed..."
+        error "install -m 755 on ${projName} failed... ${REDX}"
     fi
 }
 
 execproj() {
-
     local projName="$1"
+    local runExecutable
     runExecutable="${PROJ_ROOT}/${projName}/bin/${projName}"
 
     # exit if it isnt an executable/doesnt exist
-    if [[ ! -x "$runExecutable" ]]; then error "$runExecutable must be type executable"; fi
+    if [[ ! -x "$runExecutable" ]]; then error "$runExecutable is not an executable"; fi
 
     # info "found $runExecutable"
-    # sudo bash
+    # bash
     "${runExecutable}"
 }
 
 lintproj() {
-
-    projName=$1
-
-    projFile="${PROJ_ROOT}/${projName}/bin/${projName}"
+    local projName=$1
+    local projFile && projFile="${PROJ_ROOT}/${projName}/bin/${projName}"
 
     shellcheck "$projFile"
 }
 
 openconf() {
-
-    [[ -n "$PROJECT_CONFIG" ]] || error "project config not found"
+    [[ -f "$PROJECT_CONFIG" ]] || error "project config not found"
 
     info "found $PROJECT_CONFIG"
     open "$PROJECT_CONFIG"
 }
 
-_import() {
+importproj() {
     readConfig
-    local originalZip=$1
 
-    # copy
-    tmpZip="${PROJ_ROOT}/.imptmp"
-    rm -rf "$tmpZip" >/dev/null # delete before creation so it starts cleanly
-    mkdir -p "$tmpZip"
-    info "made temporary directory in project root"
-    rsync -a "$originalZip" "$tmpZip"
-    info "copied $originalZip to $tmpZip"
+    local originalZip="$1"
+    tmpImp="${PROJ_ROOT}/.imptmp"
+    local choice=""
 
-    # unzip
-    cd "$tmpZip"
-    unzip "$originalZip" &>/dev/null
-    info "unzipped $originalZip"
-    rm -f "$originalZip"
+    # make temporary config file
+    # if success, replace current config file with temp config file
+    # otherwise, remove temp config
+    importConfigTmp=$(mktemp) || error "failed to make a temporary config file"
+    jq -e '.projects = []' "$PROJECT_CONFIG" > "$importConfigTmp" \
+    || error "failed to write to a temporary config file"
 
-    # ask to move
-    find "${tmpZip}/projects" -mindepth 1 -maxdepth 1 -type d -print0 |
-    while IFS= read -r -d '' impProject; do4
+    # for trap
+    cleanupImport() {
+        rm -rf -- "$tmpImp"
+        rm -rf -- "$importConfigTmp"
+    }
 
-        # MOVE .imptmp/projects/impProject TO projects/impProject
+    # prepare tmp dir
+    if [[ -d "$tmpImp" ]]; then
+        info "removing old $tmpImp"
+        rm -rf -- "$tmpImp"
+    fi
 
-        # echo $impProject
-        # .imptmp/projects/projmanager
-        baseDir=${impProject##*/} # .projmanager
-        echo "$baseDir"
-        projRootEquivalent="${PROJ_ROOT}/${baseDir}" # projects/projmanager
-        echo "$projRootEquivalent"
-        projRootBase="${projRootEquivalent##*/}"
-        echo "$projRootBase"
-        preSize="$(du -sh $projRootEquivalent | cut -f1)iB"
-        impSize="$(du -sh $impProject | cut -f1)iB"
+    # make tmp dir
+    if mkdir -p -- "$tmpImp"; then info "made temporary directory in project root" && trap cleanupImport EXIT;
+    else error "failed to make temporary directory $tmpImp"; fi
 
-        projectRootBn="${PROJ_ROOT##*/}"
+    # copy archive into tmp dir
+    rsync -a -- "$originalZip" "$tmpImp/"
+    info "copied $originalZip to $tmpImp"
 
-        if [[ ! "$choice" == "Y" ]]; then
-            prompt "replace ${GRAY}.../${projRootBase}/${NC}$projRootBase ($preSize) with ${GRAY}.../${projRootBase}/${NC}$baseDir ($impSize)? [y/n]"
+    # unzip archive
+    cd "$tmpImp" || error "failed to enter $tmpImp"
+
+    if unzip "$originalZip"; then
+        info "unzipped $originalZip"
+    else
+        error "failed to unzip $originalZip"
+    fi
+
+    # compare/replace
+    while IFS= read -r -d '' impProject; do
+        local baseDir="${impProject##*/}"
+        local projDir="${PROJ_ROOT}/${baseDir}"
+        local projFile="${projDir}/bin/${baseDir}"
+        local archiveFile="${impProject}/bin/${baseDir}"
+
+        # exit early if these dont exist
+        [[ -d "$impProject" && -e "$archiveFile" ]] || error "could not find one of these 2: $projFile $archiveFile"
+
+        # initialize size variables
+        local preSize
+        local impSize
+        local archiveVer
+        local archiveVerDate
+        local existingVer
+        local existingVerDate
+
+        preSize="$(du -sh "$projDir" | cut -f1)"
+        impSize="$(du -sh "$impProject" | cut -f1)"
+
+        archiveVer="$(grep -m1 '^VERSION=' "$archiveFile" | cut -d= -f2)"
+        archiveVerDate="$(grep -m1 '^VERDATE=' "$archiveFile" | cut -d= -f2- | tr -d '"')"
+
+        existingVer="$(grep -m1 '^VERSION=' "$projFile" | cut -d= -f2)"
+        existingVerDate="$(grep -m1 '^VERDATE=' "$projFile" | cut -d= -f2)"
+
+        # if choice == Y, skip prompt
+        if [[ "$choice" != "Y" ]]; then
+            prompt "existing: ${baseDir} ($preSize) [$existingVer on $existingVerDate]"
+            prompt "archived: ${baseDir} ($impSize) [$archiveVer on $archiveVerDate] [Y/n]"
             read -r choice < /dev/tty
         fi
 
-        if [[ "$choice" == "y" || "$choice" == "Y" ]]; then
-            info "replacing ${baseDir}..."
-
-            if rsync -a --delete  "$impProject/" "$projRootEquivalent/"; then
-            info "replaced ${GREEN}successfully${NC}";
-            else error "error during replacement of ${baseDir}"; fi
-        else
-            info "skipping ${baseDir}"
+        # if choice == n|N, skip importing
+        if [[ "$choice" =~ ^[Nn]$ ]]; then
+            info "skipping $baseDir"
+            continue
         fi
-    done
 
-    rm -rf "$tmpZip"
-    info "removed tmpZip"
+        # replace
+        info "replacing $baseDir..."
+
+        # added to project list
+        local tmp
+        tmp=$(mktemp)
+        jq --arg projName "$baseDir" '.projects += [$projName]' "$importConfigTmp" > "$tmp" && mv "$tmp" "$importConfigTmp"
+        info "added $projName to temporary config"
+
+        if rsync -a --delete "$impProject/" "$projDir/"; then
+            infoReplace "replaced $baseDir $GREENCHECK"
+        else
+            error "error during replacement of $baseDir $REDX"
+        fi
+    done < <(
+        find "${tmpImp}/projects" \
+            -mindepth 1 \
+            -maxdepth 1 \
+            -type d -print0
+    )
+
+    # rm tmp
+    if rm -rf -- "$tmpImp"; then info "removed $tmpImp"
+    else error "failed to remove $tmpImp"; fi
+
+    # since it succeeded, move temporary config to new config
+    mv "$importConfigTmp" "$PROJECT_CONFIG"
+    readConfig
 }
 
 # handle proj generation
@@ -483,16 +649,46 @@ if [[ $config -eq 1 ]]; then
 # handle project updating
 if [[ -n "$upd" ]]; then
     readConfig
-    # if *, update all, otherwise update just 1
+    projDir="${PROJ_ROOT}/${upd}/bin"
+    projFile="${projDir}/${upd}"
+    oldVer=$(grep -m1 '^VERSION=' "$projFile" | cut -d'=' -f2)
 
+    # if *, update all
     if [[ "$upd" == "*" ]]; then
-        for proj in $PROJECTS; do
-            updproj "$proj"
+        printf "\033[2J\033[H" # clear
+        # do not double quote $PROJECTS
+        for project in "${PROJECTS[@]}"; do
+            projDir="${PROJ_ROOT}/${project}/bin"
+            projFile="${projDir}/${project}"
+            oldVer=$(grep -m1 '^VERSION=' "$projFile" | cut -d'=' -f2)
+
+            # safety check for projfile not existing
+            if [[ ! -f "$projFile" ]]; then
+                printf "%b" "${WARN} project file not found: $projFile (continuing) " # not using warn cus newline is ugly
+                read -r
+                continue
+            fi
+            # safety check for oldver not being found
+            if [[ -z "$oldVer" ]]; then
+                warn "could not find version for ${project}."
+                read -r
+                continue
+            fi
+
+            # echo "$projDir"
+            # echo "$projFile"
+            # echo "$oldVer"
+
+            if [[ "$push" -eq 1 ]]; then
+                sleep 0.5
+                printf "\033[2J\033[H"
+            fi
+
+            updproj "$project" "$oldVer"
         done
     else
-        updproj "$upd"
+        updproj "$upd" "$oldVer"
     fi
-    fin
 fi
 
 # can be paired together
@@ -517,8 +713,6 @@ if [[ $zip -eq 1 ]]; then
     _zip; fi
 
 if [[ -n "$import" ]]; then
-    _import "$import"; fi
+    importproj "$import"; fi
 
 fin
-
-# todo: add pm -i import
