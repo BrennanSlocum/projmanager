@@ -1,6 +1,6 @@
 {
   "root": "/home/blue/folders/projects",
-  "archive": "/home/blue/folders/projects",
+  "archive": "/mnt/storage/folders+/projects/",
   "lang": "bash",
   "projects": [
     "projmanager",
@@ -14,6 +14,8 @@
     "shortcut",
     "dvhelper",
     "todo",
-    "obshandler"
+    "obshandler",
+    "gif",
+    "speed"
   ]
 }

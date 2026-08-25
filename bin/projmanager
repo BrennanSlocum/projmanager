@@ -367,6 +367,17 @@ set -euo pipefail
 
 VERSION=0.0
 VERDATE=\"$(date +"%B %d, %Y")\"
+
+usage() {
+    cat <<EOF
+$projName [args]
+EOF
+}
+
+ver() {
+    echo \"\$VERSION \$VERDATE\"
+}
+
 " > "${newProjDir}/bin/${projName}"
     info "generated empty script"
 
@@ -414,7 +425,8 @@ rmproj() {
 
         local tmp
         tmp=$(mktemp)
-        jq --arg projName "$projName" 'del(.projects[] | select(. == $projName))' "$PROJECT_CONFIG" > "$tmp" && mv
+        jq --arg projName "$projName" 'del(.projects[] | select(. == $projName))'\
+        "$PROJECT_CONFIG" > "$tmp" && mv
 "$tmp" "$PROJECT_CONFIG"
         info "removed $projName from projects.json"
     else
@@ -572,12 +584,7 @@ importproj() {
         [[ -d "$impProject" && -e "$archiveFile" ]] || error "could not find one of these 2: $projFile $archiveFile"
 
         # initialize size variables
-        local preSize
-        local impSize
-        local archiveVer
-        local archiveVerDate
-        local existingVer
-        local existingVerDate
+        local preSize impSize archiveVer archiveVerDate existingVer existingVerDate
 
         preSize="$(du -sh "$projDir" | cut -f1)"
         impSize="$(du -sh "$impProject" | cut -f1)"
@@ -649,13 +656,9 @@ if [[ $config -eq 1 ]]; then
 # handle project updating
 if [[ -n "$upd" ]]; then
     readConfig
-    projDir="${PROJ_ROOT}/${upd}/bin"
-    projFile="${projDir}/${upd}"
-    oldVer=$(grep -m1 '^VERSION=' "$projFile" | cut -d'=' -f2)
 
     # if *, update all
     if [[ "$upd" == "*" ]]; then
-        printf "\033[2J\033[H" # clear
         # do not double quote $PROJECTS
         for project in "${PROJECTS[@]}"; do
             projDir="${PROJ_ROOT}/${project}/bin"
@@ -687,6 +690,9 @@ if [[ -n "$upd" ]]; then
             updproj "$project" "$oldVer"
         done
     else
+        projDir="${PROJ_ROOT}/${upd}/bin"
+        projFile="${projDir}/${upd}"
+        oldVer=$(grep -m1 '^VERSION=' "$projFile" | cut -d'=' -f2)
         updproj "$upd" "$oldVer"
     fi
 fi
