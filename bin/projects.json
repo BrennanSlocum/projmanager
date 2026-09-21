@@ -3,12 +3,12 @@
   "archive": "/mnt/storage/folders+/projects/",
   "lang": "bash",
   "projects": [
-    "projmanager",
-    "cliplistener",
     "datefilter",
-    "organize",
     "plb",
     "trim",
+    "organize",
+    "projmanager",
+    "cliplistener",
     "clock",
     "quotereader",
     "shortcut",
@@ -16,6 +16,10 @@
     "todo",
     "obshandler",
     "gif",
-    "speed"
+    "speed",
+    "concat",
+    "preview",
+    "imagename",
+    "screentime"
   ]
 }

@@ -91,7 +91,7 @@ error() {
 }
 
 fin() {
-    printf "%b\n" "${FIN}"
+    printf "%b\n" "${FIN}\007"
     # exit 0
 }
 
