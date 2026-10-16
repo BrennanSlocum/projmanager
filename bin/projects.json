@@ -20,6 +20,8 @@
     "concat",
     "preview",
     "imagename",
-    "screentime"
+    "screentime",
+    "genentry",
+    "peek"
   ]
 }
